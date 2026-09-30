@@ -1,0 +1,11 @@
+bin/
+dcu/
+__history/
+__recovery/
+*.identcache
+*.local
+*.dsk
+*.stat
+CLAUDE.md
+*.~*
+*.tvsconfig

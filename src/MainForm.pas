@@ -60,6 +60,9 @@ type
     mnuFileExit: TMenuItem;
     mnuOptions: TMenuItem;
     mnuExplorerMenu: TMenuItem;
+    mnuOptionsSep1: TMenuItem;
+    mnuSoundFont: TMenuItem;
+    mnuSoundFontBundled: TMenuItem;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -82,6 +85,8 @@ type
     procedure mnuFileExitClick(Sender: TObject);
     procedure mnuOptionsClick(Sender: TObject);
     procedure mnuExplorerMenuClick(Sender: TObject);
+    procedure mnuSoundFontClick(Sender: TObject);
+    procedure mnuSoundFontBundledClick(Sender: TObject);
   private
     FEngine: TAudioEngine;
     FTree: TShellTreeView;
@@ -98,6 +103,7 @@ type
     FWasPlaying: Boolean;
     FUpdatingList: Boolean;
     FIniFile: string;
+    FSoundFont: string;   // [MIDI] SoundFont override from the ini, '' = bundled
     FPendingFolder: string;
     procedure WMCopyData(var Msg: TWMCopyData); message WM_COPYDATA;
     procedure WMOpenFolder(var Msg: TMessage); message WM_OPEN_FOLDER;
@@ -123,6 +129,7 @@ type
     procedure CreateBanner;
     procedure LoadSettings;
     procedure SaveSettings;
+    procedure ApplySoundFont(const FileName: string);
   protected
     procedure CreateParams(var Params: TCreateParams); override;
   end;
@@ -324,9 +331,14 @@ begin
     FSortCol := TSortColumn(EnsureRange(Ini.ReadInteger('Browse', 'SortColumn', 0), 0, Ord(High(TSortColumn))));
     FSortDesc := Ini.ReadBool('Browse', 'SortDesc', False);
     Folder := Ini.ReadString('Browse', 'Folder', '');
+    FSoundFont := Ini.ReadString('MIDI', 'SoundFont', '');
   finally
     Ini.Free;
   end;
+  // Before NavigateTo, so no MIDI stream exists yet when the font changes
+  if (FSoundFont <> '') and FEngine.MidiSupported and not FEngine.SetSoundFont(FSoundFont) then
+    MessageDlg(Format('Could not load the soundfont "%s" set in %s.',
+      [FSoundFont, ExtractFileName(FIniFile)]), mtWarning, [mbOK], 0);
   FEngine.Volume := Sqr(tbVolume.Position / tbVolume.Max);
   FEngine.Loop := chkLoop.Checked;
 
@@ -363,6 +375,7 @@ begin
     Ini.WriteInteger('Browse', 'SortColumn', Ord(FSortCol));
     Ini.WriteBool('Browse', 'SortDesc', FSortDesc);
     Ini.WriteString('Browse', 'Folder', FFolder);
+    Ini.WriteString('MIDI', 'SoundFont', FSoundFont);   // kept even if empty, so it's discoverable
     Ini.UpdateFile;
   finally
     Ini.Free;
@@ -429,6 +442,8 @@ end;
 procedure TfrmMain.mnuOptionsClick(Sender: TObject);
 begin
   mnuExplorerMenu.Checked := IsContextMenuRegistered;
+  mnuSoundFont.Enabled := FEngine.MidiSupported;
+  mnuSoundFontBundled.Enabled := FEngine.MidiSupported and (FSoundFont <> '');
 end;
 
 procedure TfrmMain.mnuExplorerMenuClick(Sender: TObject);
@@ -448,6 +463,79 @@ begin
     on E: Exception do
       MessageDlg(E.Message, mtError, [mbOK], 0);
   end;
+end;
+
+procedure TfrmMain.mnuSoundFontClick(Sender: TObject);
+var
+  Dlg: TOpenDialog;
+  ExeDir, Path: string;
+begin
+  Dlg := TOpenDialog.Create(nil);
+  try
+    Dlg.Title := 'Choose MIDI soundfont';
+    Dlg.Filter := 'SoundFonts (*.sf2;*.sf3)|*.sf2;*.sf3|All files (*.*)|*.*';
+    Dlg.Options := Dlg.Options + [ofPathMustExist, ofFileMustExist];
+    if FEngine.SoundFont <> '' then
+    begin
+      Dlg.InitialDir := ExtractFilePath(FEngine.SoundFont);
+      Dlg.FileName := ExtractFileName(FEngine.SoundFont);
+    end;
+    if not Dlg.Execute(Handle) then
+      Exit;
+    Path := Dlg.FileName;
+  finally
+    Dlg.Free;
+  end;
+  // Store fonts inside the app folder relative to it, so a portable copy
+  // keeps working when moved
+  ExeDir := ExtractFilePath(ParamStr(0));
+  if SameText(Copy(Path, 1, Length(ExeDir)), ExeDir) then
+    Path := Copy(Path, Length(ExeDir) + 1, MaxInt);
+  ApplySoundFont(Path);
+end;
+
+procedure TfrmMain.mnuSoundFontBundledClick(Sender: TObject);
+begin
+  ApplySoundFont('');
+end;
+
+procedure TfrmMain.ApplySoundFont(const FileName: string);
+var
+  Ini: TMemIniFile;
+  WasPlaying: Boolean;
+begin
+  if not FEngine.SetSoundFont(FileName) then
+  begin
+    if FileName = '' then
+      MessageDlg('Could not load the bundled soundfont.', mtError, [mbOK], 0)
+    else
+      MessageDlg(Format('Could not load the soundfont "%s".', [FileName]), mtError, [mbOK], 0);
+    Exit;
+  end;
+  FSoundFont := FileName;
+
+  // Saved right away rather than only on exit
+  Ini := TMemIniFile.Create(FIniFile, TEncoding.UTF8);
+  try
+    Ini.WriteString('MIDI', 'SoundFont', FSoundFont);
+    Ini.UpdateFile;
+  finally
+    Ini.Free;
+  end;
+
+  // A loaded MIDI file was rendered (stream and waveform) with the old font
+  if (FCurrentFile <> '') and (FCurrentIdx >= 0) and (FCurrentIdx <= High(FAll)) and
+     FAll[FCurrentIdx].Info.IsMidi then
+  begin
+    WasPlaying := FEngine.IsPlaying;
+    StopPlayback;
+    FEngine.Open(FCurrentFile);
+    FCue := 0;
+    FWave.SetPeaks(StartPeakJob(FCurrentFile, FWave.Handle));
+    if WasPlaying then
+      PlayFromCue;
+  end;
+  UpdateStatus;
 end;
 
 { Folder / file list }
@@ -665,7 +753,14 @@ begin
     Exit;
   E := FAll[FView[Item.Index]];
   Item.Caption := E.Name;
-  if E.Scanned and E.Info.Valid then
+  if E.Scanned and E.Info.Valid and E.Info.IsMidi then
+  begin
+    Item.SubItems.Add(FormatDuration(E.Info.Duration));
+    Item.SubItems.Add('');
+    Item.SubItems.Add('');
+    Item.SubItems.Add('');
+  end
+  else if E.Scanned and E.Info.Valid then
   begin
     Item.SubItems.Add(FormatDuration(E.Info.Duration));
     Item.SubItems.Add(FormatRate(E.Info.SampleRate));
@@ -942,7 +1037,14 @@ begin
   S := '';
   if (FCurrentIdx >= 0) and (FCurrentIdx <= High(FAll)) then
     with FAll[FCurrentIdx] do
-      if Scanned and Info.Valid then
+      if Scanned and Info.Valid and Info.IsMidi then
+      begin
+        if FEngine.SoundFont <> '' then
+          S := Format('%s  %s', [Ext, ExtractFileName(FEngine.SoundFont)])
+        else
+          S := Ext + '  no soundfont';
+      end
+      else if Scanned and Info.Valid then
       begin
         S := Format('%s  %s Hz', [Ext, FormatFloat('#,##0', Info.SampleRate)]);
         if FormatBits(Info) <> '' then

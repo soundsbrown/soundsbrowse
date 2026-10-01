@@ -42,6 +42,9 @@ procedure WaitForWorkers(TimeoutMs: Cardinal);
 
 implementation
 
+const
+  THREAD_MODE_BACKGROUND_BEGIN = $00010000;   // not in Winapi.Windows
+
 var
   GActiveWorkers: Integer;
 
@@ -181,6 +184,9 @@ end;
 
 procedure TScanThread.Execute;
 begin
+  // Low CPU and I/O priority: opening every file in a folder must not starve
+  // the playing stream of disk reads, especially on a hard disk
+  SetThreadPriority(GetCurrentThread, THREAD_MODE_BACKGROUND_BEGIN);
   (FJob as TScanJob).Run;
   FJob := nil;
 end;

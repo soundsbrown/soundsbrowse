@@ -157,6 +157,9 @@ object frmMain: TfrmMain
         Height = 40
         Align = alBottom
         BevelOuter = bvNone
+        DoubleBuffered = True
+        ParentBackground = False
+        ParentDoubleBuffered = False
         TabOrder = 0
         DesignSize = (
           895
@@ -188,6 +191,7 @@ object frmMain: TfrmMain
           Width = 75
           Height = 28
           Caption = 'Play'
+          ParentDoubleBuffered = False
           TabOrder = 0
           TabStop = False
           OnClick = btnPlayClick
@@ -198,6 +202,7 @@ object frmMain: TfrmMain
           Width = 75
           Height = 28
           Caption = 'Stop'
+          ParentDoubleBuffered = False
           TabOrder = 1
           TabStop = False
           OnClick = btnStopClick
@@ -208,6 +213,7 @@ object frmMain: TfrmMain
           Width = 60
           Height = 17
           Caption = 'Loop'
+          ParentDoubleBuffered = False
           TabOrder = 2
           TabStop = False
           OnClick = chkLoopClick
@@ -220,6 +226,7 @@ object frmMain: TfrmMain
           Caption = 'Auto-play'
           Checked = True
           State = cbChecked
+          ParentDoubleBuffered = False
           TabOrder = 3
           TabStop = False
         end
@@ -232,6 +239,7 @@ object frmMain: TfrmMain
           Max = 100
           Position = 80
           ShowSelRange = False
+          ParentDoubleBuffered = False
           TabOrder = 4
           TabStop = False
           TickStyle = tsNone
@@ -288,6 +296,17 @@ object frmMain: TfrmMain
       object mnuExplorerMenu: TMenuItem
         Caption = '&Show in Explorer context menu'
         OnClick = mnuExplorerMenuClick
+      end
+      object mnuOptionsSep1: TMenuItem
+        Caption = '-'
+      end
+      object mnuSoundFont: TMenuItem
+        Caption = 'Choose MIDI sound&font...'
+        OnClick = mnuSoundFontClick
+      end
+      object mnuSoundFontBundled: TMenuItem
+        Caption = 'Use &bundled MIDI soundfont'
+        OnClick = mnuSoundFontBundledClick
       end
     end
   end

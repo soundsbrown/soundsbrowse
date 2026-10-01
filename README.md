@@ -6,7 +6,7 @@ Built with Delphi 13 (VCL) and [BASS](https://www.un4seen.com/) (free for non-co
 ## Build
 
 Open `SoundsBrowse.dproj` in Delphi and build the **Win64** target. The exe is written to `bin\Win64\`.
-A post-build step copies `bass.dll` and its add-ons from `lib\bass\x64\` next to it.
+A post-build step copies `bass.dll` and its add-ons from `lib\bass\x64\`, and the soundfont from `lib\soundfont\`, next to it.
 To run it elsewhere, copy the whole `bin\Win64` folder.
 
 ## Formats
@@ -14,7 +14,20 @@ To run it elsewhere, copy the whole `bin\Win64` folder.
 - **BASS itself:** WAV/BWF, AIFF, MP3/MP2/MP1 and Ogg Vorbis. It also plays M4A/AAC/WMA through Windows Media Foundation.
 - **Add-ons**, loaded automatically from `bass*.dll` next to the exe:
   - FLAC, Opus, WavPack, APE, DSD, ALAC, Musepack, TTA, Speex and AC3.
+  - MIDI (`.mid`, `.midi`, `.rmi`, `.kar`) through BASSMIDI, rendered with a soundfont (see below).
   - To add more, drop in another BASS add-on DLL.
+
+### MIDI soundfont
+
+MIDI files are played with the Aspirin Stereo V1.2 soundfont (`005.6mg_Aspirin_Stereo_V1.2_Bank.sf2`), which ships next to the exe.
+To use a different `.sf2` or `.sf3` soundfont, choose *Options > Choose MIDI soundfont...*. *Options > Use bundled MIDI soundfont* switches back.
+
+The choice is saved in `SoundsBrowse.ini`, where you can also edit it by hand (a relative path is relative to the exe; empty means the bundled one):
+
+```ini
+[MIDI]
+SoundFont=C:\SoundFonts\MyFont.sf2
+```
 
 ## Controls
 
@@ -56,4 +69,5 @@ SoundsBrowse is released under the [MIT License](LICENSE).
 The MIT License covers only SoundsBrowse's own code. These bundled third-party files keep their own terms:
 
 - **BASS** and its add-ons (`lib\bass\`) are by [Un4seen Developments](https://www.un4seen.com/). They are free for non-commercial use only; see `lib\bass\bass.txt`. If you use this code in a commercial product, you need your own BASS licence.
+- **The Aspirin Stereo V1.2 soundfont** (`lib\soundfont\`) is in the public domain, as stated in the file's own copyright field.
 - **The Windows10 Dark VCL style** (`res\Windows10Dark.vsf`) comes with Delphi and is redistributed under Embarcadero's terms for redistributable style files.

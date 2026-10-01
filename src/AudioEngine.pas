@@ -6,7 +6,7 @@ unit AudioEngine;
 interface
 
 uses
-  Winapi.Windows, System.SysUtils, System.Classes, bass;
+  Winapi.Windows, System.SysUtils, System.Classes, System.IOUtils, bass;
 
 type
   TAudioInfo = record
@@ -15,6 +15,7 @@ type
     Channels: Cardinal;
     Bits: Cardinal;      // 0 = not applicable (lossy codecs)
     IsFloat: Boolean;
+    IsMidi: Boolean;     // rate/channels/bits are the synth's output, so left 0
     Duration: Double;    // seconds, < 0 if unknown
   end;
 
@@ -28,7 +29,10 @@ type
     FVolume: Single;
     FExtensions: TStringList;
     FPlugins: TStringList;
+    FMidi: Boolean;
+    FSoundFont: string;
     procedure LoadPlugins;
+    class function BundledSoundFont: string; static;
     procedure AddExtensions(const Filter: string);
     procedure FreeStream;
     procedure ApplyLoop;
@@ -41,6 +45,7 @@ type
     function Init(Wnd: HWND): Boolean;
     function IsSupportedFile(const FileName: string): Boolean;
     class function Probe(const FileName: string): TAudioInfo; static;
+    function SetSoundFont(const FileName: string): Boolean;   // '' = bundled
 
     procedure Open(const FileName: string);
     procedure Play(FromSec: Double);
@@ -56,6 +61,8 @@ type
     property SelEnd: Double read FSelEnd;
     property Extensions: TStringList read FExtensions;
     property Plugins: TStringList read FPlugins;
+    property MidiSupported: Boolean read FMidi;
+    property SoundFont: string read FSoundFont;
   end;
 
 function FormatDuration(Sec: Double; WithMillis: Boolean = False): string;
@@ -67,6 +74,12 @@ const
   // Media Foundation, which BASS uses automatically when available.
   BuiltInFormats = '*.wav;*.wave;*.bwf;*.aif;*.aiff;*.aifc;*.mp3;*.mp2;*.mp1;*.ogg;' +
                    '*.m4a;*.aac;*.mp4;*.wma';
+
+  // From bassmidi.h; only these are needed, so bassmidi.pas isn't pulled in
+  BASS_CONFIG_MIDI_DEFFONT = $10403;
+  BASS_CTYPE_STREAM_MIDI   = $10D00;
+
+  SoundFontMasks: array[0..1] of string = ('*.sf2', '*.sf3');
 
 function FormatDuration(Sec: Double; WithMillis: Boolean): string;
 var
@@ -125,6 +138,14 @@ begin
   AddExtensions(BuiltInFormats);
   if FInitialized then
     LoadPlugins;
+  // Read-ahead for the playback stream (BASS_ASYNCFILE in Play), so that
+  // disk stalls caused by other I/O don't make playback stutter. 2 MB is
+  // about 12 s of CD-quality WAV. Only one playback stream exists at a time.
+  BASS_SetConfig(BASS_CONFIG_ASYNCFILE_BUFFER, 2 * 1024 * 1024);
+  // BASSMIDI has no instruments of its own: default to the soundfont that
+  // ships next to the exe. The ini can override it later via SetSoundFont.
+  if FMidi then
+    SetSoundFont('');
 end;
 
 procedure TAudioEngine.AddExtensions(const Filter: string);
@@ -154,6 +175,8 @@ begin
       if Plugin = 0 then
         Continue;
       FPlugins.Add(ChangeFileExt(SR.Name, ''));
+      if SameText(SR.Name, 'bassmidi.dll') then
+        FMidi := True;
       Info := BASS_PluginGetInfo(Plugin);
       if Info <> nil then
         for I := 0 to Integer(Info^.formatc) - 1 do
@@ -162,6 +185,38 @@ begin
   finally
     FindClose(SR);
   end;
+end;
+
+class function TAudioEngine.BundledSoundFont: string;
+var
+  Dir, Mask: string;
+  SR: TSearchRec;
+begin
+  Result := '';
+  Dir := ExtractFilePath(ParamStr(0));
+  for Mask in SoundFontMasks do
+    if FindFirst(Dir + Mask, faAnyFile, SR) = 0 then
+    begin
+      FindClose(SR);
+      Exit(Dir + SR.Name);
+    end;
+end;
+
+function TAudioEngine.SetSoundFont(const FileName: string): Boolean;
+var
+  Path: string;
+begin
+  // '' means the bundled soundfont. Relative paths are relative to the exe,
+  // so a portable copy keeps working.
+  if FileName = '' then
+    Path := BundledSoundFont
+  else
+    Path := ExpandFileName(TPath.Combine(ExtractFilePath(ParamStr(0)), FileName, False));
+  // If the font can't be loaded, BASSMIDI keeps the previous one
+  Result := FMidi and (Path <> '') and FileExists(Path) and
+    BASS_SetConfigPtr(BASS_CONFIG_MIDI_DEFFONT or BASS_UNICODE, PChar(Path));
+  if Result then
+    FSoundFont := Path;
 end;
 
 function TAudioEngine.IsSupportedFile(const FileName: string): Boolean;
@@ -185,10 +240,14 @@ begin
     if BASS_ChannelGetInfo(H, CI) then
     begin
       Result.Valid := True;
-      Result.SampleRate := CI.freq;
-      Result.Channels := CI.chans;
-      Result.Bits := CI.origres and $FFFF;
-      Result.IsFloat := (CI.origres and BASS_ORIGRES_FLOAT) <> 0;
+      Result.IsMidi := CI.ctype = BASS_CTYPE_STREAM_MIDI;
+      if not Result.IsMidi then
+      begin
+        Result.SampleRate := CI.freq;
+        Result.Channels := CI.chans;
+        Result.Bits := CI.origres and $FFFF;
+        Result.IsFloat := (CI.origres and BASS_ORIGRES_FLOAT) <> 0;
+      end;
       Len := BASS_ChannelGetLength(H, BASS_POS_BYTE);
       if Len <> QW_ERROR then
         Result.Duration := BASS_ChannelBytes2Seconds(H, Len);
@@ -234,7 +293,7 @@ begin
   if FFileName = '' then
     Exit;
   FStream := BASS_StreamCreateFile(BASS_FILE_NAME, PChar(FFileName), 0, 0,
-    BASS_SAMPLE_FLOAT or BASS_UNICODE);
+    BASS_SAMPLE_FLOAT or BASS_ASYNCFILE or BASS_UNICODE);
   if FStream = 0 then
     Exit;
   if HasSelection then
